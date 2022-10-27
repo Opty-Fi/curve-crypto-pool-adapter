@@ -1,6 +1,6 @@
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/dist/src/signer-with-address";
 import { Fixture } from "ethereum-waffle";
-import { CurveMetapoolSwapAdapter } from "../../typechain/CurveMetapoolSwapAdapter";
+import { CurveCryptoPoolAdapter } from "../../typechain";
 import { TestDeFiAdapter } from "../../typechain/TestDeFiAdapter";
 
 export interface Signers {
@@ -35,7 +35,7 @@ export interface Whale {
 
 declare module "mocha" {
   export interface Context {
-    curveMetapoolSwapAdapter: CurveMetapoolSwapAdapter;
+    curveCryptoPoolAdapter: CurveCryptoPoolAdapter;
     testDeFiAdapter: TestDeFiAdapter;
     loadFixture: <T>(fixture: Fixture<T>) => Promise<T>;
     signers: Signers;

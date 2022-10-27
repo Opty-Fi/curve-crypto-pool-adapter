@@ -207,4 +207,12 @@ contract TestDeFiAdapter is MultiCall {
     function getERC20TokenBalance(address _token, address _account) external view returns (uint256) {
         return ERC20(_token).balanceOf(_account);
     }
+
+    function giveAllowances(ERC20[] calldata _tokens, address[] calldata _spenders) external {
+        uint256 _tokensLen = _tokens.length;
+        require(_tokensLen == _spenders.length, "!LENGTH_MISMATCH");
+        for (uint256 _i; _i < _tokens.length; _i++) {
+            _tokens[_i].approve(_spenders[_i], type(uint256).max);
+        }
+    }
 }

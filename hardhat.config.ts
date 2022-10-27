@@ -3,8 +3,7 @@
 import "@nomiclabs/hardhat-waffle";
 import "@typechain/hardhat";
 import "solidity-coverage";
-import { resolve, join } from "path";
-import fs from "fs";
+import { resolve } from "path";
 import { config as dotenvConfig } from "dotenv";
 import { HardhatUserConfig, NetworkUserConfig } from "hardhat/types";
 import {
@@ -22,25 +21,10 @@ import { NETWORKS_RPC_URL, buildForkConfig, NETWORKS_CHAIN_ID, NETWORKS_DEFAULT_
 
 dotenvConfig({ path: resolve(__dirname, "./.env") });
 
-const SKIP_LOAD = process.env.SKIP_LOAD === "true";
 const HARDFORK = "london";
 const MNEMONIC_PATH = "m/44'/60'/0'/0";
 const MNEMONIC = process.env.MNEMONIC || "";
 const NETWORK = process.env.NETWORK || "hardhat";
-
-// Prevent to load scripts before compilation and typechain
-if (!SKIP_LOAD) {
-  ["1_ethereum"].forEach(folder => {
-    const tasksPath = join(__dirname, "tasks", folder);
-    fs.readdirSync(tasksPath)
-      .filter(pth => pth.includes(".ts"))
-      .forEach(task => {
-        require(`${tasksPath}/${task}`);
-      });
-  });
-  require("./tasks/accounts");
-  require("./tasks/clean");
-}
 
 const getCommonNetworkConfig = (networkName: eNetwork): NetworkUserConfig | undefined => ({
   url: NETWORKS_RPC_URL[networkName],
@@ -79,8 +63,8 @@ const config: HardhatUserConfig = {
     kovan_oethereum: getCommonNetworkConfig(eOptimisticEthereumNetwork.kovan_oethereum),
     goerli_oethereum: getCommonNetworkConfig(eOptimisticEthereumNetwork.goerli_oethereum),
     hardhat: {
-      hardfork: "london",
-      gasPrice: NETWORKS_DEFAULT_GAS[NETWORK],
+      hardfork: "merge",
+      gasPrice: "auto",
       chainId: NETWORKS_CHAIN_ID[NETWORK],
       initialBaseFeePerGas: 1_00_000_000,
       accounts: {

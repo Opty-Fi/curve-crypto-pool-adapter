@@ -1,4 +1,4 @@
-import hre from "hardhat";
+import hre, { ethers } from "hardhat";
 import chai, { expect } from "chai";
 import { solidity } from "ethereum-waffle";
 import { getAddress } from "ethers/lib/utils";
@@ -6,7 +6,16 @@ import { BigNumber } from "ethers";
 import { PoolItem, Whale } from "../types";
 import { getOverrideOptions, setTokenBalanceInStorage } from "../../utils";
 import whales from "../../../helpers/whales.json";
-import { ERC20 } from "../../../typechain";
+import {
+  ERC20,
+  ICurveCryptoPool,
+  ICurveCryptoPool__factory,
+  ICurveFactory,
+  ICurveFactory__factory,
+  IERC20,
+  IERC20__factory,
+} from "../../../typechain";
+import { default as CurveExports } from "@optyfi/defi-legos/ethereum/curve/contracts";
 
 chai.use(solidity);
 
@@ -53,24 +62,32 @@ export function shouldBehaveLikeCurveMetapoolSwapAdapter(token: string, pool: Po
       this.skip();
     }
     // curve's swap pool instance
-    const curveMetapoolSwapInstance = await hre.ethers.getContractAt("ICurveMetapoolSwap", pool.pool);
+    const curveCryptoPoolInstance = <ICurveCryptoPool>(
+      await hre.ethers.getContractAt(ICurveCryptoPool__factory.abi, pool.pool)
+    );
+    const lpTokenInstance = <IERC20>await ethers.getContractAt(IERC20__factory.abi, pool.lpToken);
+
+    const tx = await this.testDeFiAdapter.giveAllowances(
+      [tokenInstance.address, lpTokenInstance.address],
+      [curveCryptoPoolInstance.address, curveCryptoPoolInstance.address],
+    );
+    await tx.wait();
     // check total supply
-    if ((await curveMetapoolSwapInstance.totalSupply()).eq(BigNumber.from(0))) {
+    if ((await lpTokenInstance.totalSupply()).eq(BigNumber.from(0))) {
       console.log("Skipping because total supply is zero");
       this.skip();
     }
     // check virtual price
-    if ((await curveMetapoolSwapInstance.get_virtual_price()).eq(BigNumber.from(0))) {
+    if ((await curveCryptoPoolInstance.get_virtual_price()).eq(BigNumber.from(0))) {
       console.log("Skipping because virtual price is zero");
       this.skip();
     }
     // curve's metapool factory instance
-    const curveMetapoolFactoryInstance = await hre.ethers.getContractAt(
-      "ICurveMetapoolFactory",
-      "0x0959158b6040D32d04c301A72CBFD6b39E21c9AE",
+    const curveFactoryInstance = <ICurveFactory>(
+      await hre.ethers.getContractAt(ICurveFactory__factory.abi, CurveExports.CurveFactory.address)
     );
     // curve's swap underlying tokens
-    const underlyingTokens = await curveMetapoolFactoryInstance.get_coins(pool.pool);
+    const underlyingTokens = await curveFactoryInstance.get_coins(pool.pool);
     // token index in curve's swap pool
     let tokenIndex: BigNumber = BigNumber.from(0);
     for (let i = 0; i < underlyingTokens.length; i++) {
@@ -79,13 +96,13 @@ export function shouldBehaveLikeCurveMetapoolSwapAdapter(token: string, pool: Po
       }
     }
     // underlying token instance
-    const underlyingTokenInstance = await hre.ethers.getContractAt("IERC20", pool.tokens[0]);
+    const underlyingTokenInstance = <IERC20>await hre.ethers.getContractAt(IERC20__factory.abi, pool.tokens[0]);
     // pool value
-    const virtualPrice = await curveMetapoolSwapInstance.get_virtual_price();
-    const totalSupply = await curveMetapoolSwapInstance.totalSupply();
+    const virtualPrice = await curveCryptoPoolInstance.get_virtual_price();
+    const totalSupply = await lpTokenInstance.totalSupply();
     const poolValue = virtualPrice.mul(totalSupply).div(BigNumber.from(10).pow(18));
     // amounts to deposit
-    let amounts = [];
+    const amounts = [];
     for (let i = 0; i < underlyingTokens.length; i++) {
       if (getAddress(underlyingTokens[i]) == pool.tokens[0]) {
         if ((await tokenInstance.balanceOf(this.testDeFiAdapter.address)).gt(poolValue)) {
@@ -97,29 +114,30 @@ export function shouldBehaveLikeCurveMetapoolSwapAdapter(token: string, pool: Po
         amounts[i] = BigNumber.from(0);
       }
     }
-    const expectedLPTokenBalanceBeforeDepositing = await curveMetapoolSwapInstance[
-      "calc_token_amount(uint256[2],bool)"
-    ]([amounts[0], amounts[1]], true);
+    const expectedLPTokenBalanceBeforeDepositing = await curveCryptoPoolInstance.calc_token_amount([
+      amounts[0],
+      amounts[1],
+    ]);
     // 1. deposit all underlying tokens
     await this.testDeFiAdapter.testGetDepositAllCodes(
       pool.tokens[0],
       pool.pool,
-      this.curveMetapoolSwapAdapter.address,
+      this.curveCryptoPoolAdapter.address,
       getOverrideOptions(),
     );
     // 1.1 assert whether lptoken balance is as expected or not after deposit
-    const actualLPTokenBalanceAfterDeposit = await this.curveMetapoolSwapAdapter.getLiquidityPoolTokenBalance(
+    const actualLPTokenBalanceAfterDeposit = await this.curveCryptoPoolAdapter.getLiquidityPoolTokenBalance(
       this.testDeFiAdapter.address,
       this.testDeFiAdapter.address, // placeholder of type address
       pool.pool,
     );
     expect(actualLPTokenBalanceAfterDeposit).to.be.gt(expectedLPTokenBalanceBeforeDepositing.mul(95).div(100));
-    const expectedLPTokenBalanceAfterDeposit = await curveMetapoolSwapInstance.balanceOf(this.testDeFiAdapter.address);
+    const expectedLPTokenBalanceAfterDeposit = await lpTokenInstance.balanceOf(this.testDeFiAdapter.address);
     expect(actualLPTokenBalanceAfterDeposit).to.be.eq(expectedLPTokenBalanceAfterDeposit);
     // 1.2 assert whether underlying token balance is as expected or not after deposit
     const actualUnderlyingTokenBalanceAfterDeposit = await this.testDeFiAdapter.getERC20TokenBalance(
       (
-        await this.curveMetapoolSwapAdapter.getUnderlyingTokens(pool.pool, pool.pool)
+        await this.curveCryptoPoolAdapter.getUnderlyingTokens(pool.pool, pool.pool)
       )[Number(tokenIndex)],
       this.testDeFiAdapter.address,
     );
@@ -128,12 +146,12 @@ export function shouldBehaveLikeCurveMetapoolSwapAdapter(token: string, pool: Po
     );
     expect(actualUnderlyingTokenBalanceAfterDeposit).to.be.eq(expectedUnderlyingTokenBalanceAfterDeposit);
     // 1.3 assert whether the amount in token is as expected or not after depositing
-    const actualAmountInTokenAfterDeposit = await this.curveMetapoolSwapAdapter.getAllAmountInToken(
+    const actualAmountInTokenAfterDeposit = await this.curveCryptoPoolAdapter.getAllAmountInToken(
       this.testDeFiAdapter.address,
       pool.tokens[0],
       pool.pool,
     );
-    const expectedAmountInTokenAfterDeposit = await curveMetapoolSwapInstance["calc_withdraw_one_coin(uint256,int128)"](
+    const expectedAmountInTokenAfterDeposit = await curveCryptoPoolInstance.calc_withdraw_one_coin(
       actualLPTokenBalanceAfterDeposit,
       tokenIndex,
     );
@@ -142,21 +160,21 @@ export function shouldBehaveLikeCurveMetapoolSwapAdapter(token: string, pool: Po
     await this.testDeFiAdapter.testGetWithdrawAllCodes(
       pool.tokens[0],
       pool.pool,
-      this.curveMetapoolSwapAdapter.address,
+      this.curveCryptoPoolAdapter.address,
       getOverrideOptions(),
     );
     // 2.1 assert whether lpToken balance is as expected or not
-    const actualLPTokenBalanceAfterWithdraw = await this.curveMetapoolSwapAdapter.getLiquidityPoolTokenBalance(
+    const actualLPTokenBalanceAfterWithdraw = await this.curveCryptoPoolAdapter.getLiquidityPoolTokenBalance(
       this.testDeFiAdapter.address,
       this.testDeFiAdapter.address, // placeholder of type address
       pool.pool,
     );
-    const expectedLPTokenBalanceAfterWithdraw = await curveMetapoolSwapInstance.balanceOf(this.testDeFiAdapter.address);
+    const expectedLPTokenBalanceAfterWithdraw = await lpTokenInstance.balanceOf(this.testDeFiAdapter.address);
     expect(actualLPTokenBalanceAfterWithdraw).to.be.eq(expectedLPTokenBalanceAfterWithdraw);
     // 2.2 assert whether underlying token balance is as expected or not after withdraw
     const actualUnderlyingTokenBalanceAfterWithdraw = await this.testDeFiAdapter.getERC20TokenBalance(
       (
-        await this.curveMetapoolSwapAdapter.getUnderlyingTokens(pool.pool, pool.pool)
+        await this.curveCryptoPoolAdapter.getUnderlyingTokens(pool.pool, pool.pool)
       )[Number(tokenIndex)],
       this.testDeFiAdapter.address,
     );
